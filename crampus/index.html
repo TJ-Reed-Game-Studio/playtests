@@ -109,11 +109,23 @@ body {
 			<div id="status-notice"></div>
 		</div>
 
-		<script src="../_engine/4.6.3.stable-d58e7ddb97/index.js"></script>
+
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"../_engine/4.6.3.stable-d58e7ddb97/index","experimentalVK":false,"fileSizes":{"index.pck":3815044,"../_engine/4.6.3.stable-d58e7ddb97/index.wasm":37700666},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"mainPack":"index.pck"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"../_engine/4.6.3.stable-d58e7ddb97/index","experimentalVK":false,"fileSizes":{"index.pck":3815652,"../_engine/4.6.3.stable-d58e7ddb97/index.wasm":37700666},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"mainPack":"index.pck"};
 const GODOT_THREADS_ENABLED = false;
-const engine = new Engine(GODOT_CONFIG);
+// Crampus's one change to Godot's page (the rest is the Web export template's own shell): the
+// engine's script is fetched and run with emscripten's WebGL name allocator replaced. As
+// exported, GL.getNewId never hands a freed name out again and fills every GL table (buffers,
+// VAOs, syncs, ...) up to the highest name ever made, while Godot's 2D renderer makes and frees
+// a buffer pair and a VAO for each polygon of every redrawn canvas item, hundreds a frame: a tab's
+// JS heap grew without end until the browser killed the page (docs/perf-long-run.md). The
+// replacement hands out freed names again: when its list of free names runs out it scans the
+// table for them, and after a scan that found none it waits half the table's size in new names
+// before the next, so a name costs O(1) on average. tools/qa/smoke.py fails on a template whose
+// allocator is not GL_IDS_FROM (the page shows why and stops).
+const GL_IDS_FROM = 'getNewId:table=>{var ret=GL.counter++;for(var i=table.length;i<ret;i++){table[i]=null}return ret}';
+const GL_IDS_TO = 'getNewId:table=>{var free=table.freeIds||(table.freeIds=[]);if(!free.length&&!(table.scanWait>0)){for(var i=table.length-1;i>0;i--){if(table[i]===null)free.push(i)}table.scanWait=free.length?0:table.length>>1}while(free.length){var id=free.pop();if(table[id]===null)return id}table.scanWait--;return table.length||1}';
+let engine = null;
 
 (function () {
 	const statusOverlay = document.getElementById('status');
@@ -162,57 +174,83 @@ const engine = new Engine(GODOT_CONFIG);
 		initializing = false;
 	}
 
-	const missing = Engine.getMissingFeatures({
-		threads: GODOT_THREADS_ENABLED,
-	});
-
-	if (missing.length !== 0) {
-		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
-			let serviceWorkerRegistrationPromise;
-			try {
-				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
-			} catch (err) {
-				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
+	// The engine's script, run as an inline script so its top-level Engine is a page global. Its
+	// path is the config's executable, which the playtests site's deploy points at its shared
+	// engine folder (tools/ci/deploy_playtest.sh).
+	function loadEngine() {
+		return fetch(GODOT_CONFIG['executable'] + '.js').then((response) => {
+			if (!response.ok) {
+				throw new Error('Loading the game failed (' + response.status + '). Reload the page.');
 			}
-			// There's a chance that installing the service worker would fix the issue
-			Promise.race([
-				serviceWorkerRegistrationPromise.then((registration) => {
-					if (registration != null) {
-						return Promise.reject(new Error('Service worker already exists.'));
-					}
-					return registration;
-				}).then(() => engine.installServiceWorker()),
-				// For some reason, `getRegistration()` can stall
-				new Promise((resolve) => {
-					setTimeout(() => resolve(), 2000);
-				}),
-			]).then(() => {
-				// Reload if there was no error.
-				window.location.reload();
-			}).catch((err) => {
-				console.error('Error while registering service worker:', err);
-			});
-		} else {
-			// Display the message as usual
-			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
-			displayFailureNotice(missingMsg + missing.join('\n'));
-		}
-	} else {
-		setStatusMode('progress');
-		engine.startGame({
-			'onProgress': function (current, total) {
-				if (current > 0 && total > 0) {
-					statusProgress.value = current;
-					statusProgress.max = total;
-				} else {
-					statusProgress.removeAttribute('value');
-					statusProgress.removeAttribute('max');
-				}
-			},
-		}).then(() => {
-			setStatusMode('hidden');
-		}, displayFailureNotice);
+			return response.text();
+		}).then((source) => {
+			const patched = source.replace(GL_IDS_FROM, () => GL_IDS_TO);
+			if (patched === source) {
+				throw new Error('This build\'s engine script is not the one its page was made for (WebGL names). Export it again with the Godot version in game.cfg.');
+			}
+			const script = document.createElement('script');
+			script.textContent = patched;
+			document.body.appendChild(script);
+		});
 	}
+
+	function start() {
+		engine = new Engine(GODOT_CONFIG);
+		const missing = Engine.getMissingFeatures({
+			threads: GODOT_THREADS_ENABLED,
+		});
+
+		if (missing.length !== 0) {
+			if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
+				let serviceWorkerRegistrationPromise;
+				try {
+					serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
+				} catch (err) {
+					serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
+				}
+				// There's a chance that installing the service worker would fix the issue
+				Promise.race([
+					serviceWorkerRegistrationPromise.then((registration) => {
+						if (registration != null) {
+							return Promise.reject(new Error('Service worker already exists.'));
+						}
+						return registration;
+					}).then(() => engine.installServiceWorker()),
+					// For some reason, `getRegistration()` can stall
+					new Promise((resolve) => {
+						setTimeout(() => resolve(), 2000);
+					}),
+				]).then(() => {
+					// Reload if there was no error.
+					window.location.reload();
+				}).catch((err) => {
+					console.error('Error while registering service worker:', err);
+				});
+			} else {
+				// Display the message as usual
+				const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
+				displayFailureNotice(missingMsg + missing.join('\n'));
+			}
+		} else {
+			setStatusMode('progress');
+			engine.startGame({
+				'onProgress': function (current, total) {
+					if (current > 0 && total > 0) {
+						statusProgress.value = current;
+						statusProgress.max = total;
+					} else {
+						statusProgress.removeAttribute('value');
+						statusProgress.removeAttribute('max');
+					}
+				},
+			}).then(() => {
+				setStatusMode('hidden');
+			}, displayFailureNotice);
+		}
+	}
+
+	setStatusMode('progress');
+	loadEngine().then(start).catch(displayFailureNotice);
 }());
 		</script>
 	</body>
