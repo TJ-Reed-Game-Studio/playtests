@@ -13,4 +13,9 @@ Web builds of TJ's games for playtesting, deployed by each game's CI (the game t
 `main` and `release` get no build here. `_engine/<godot version>-<wasm hash>/` holds the Godot
 engine, shared by every build made with that engine, so each build folder holds only its game.
 
+`apps/<app>/` holds the public pages one of the studio's own sign-in apps needs, such as
+`apps/rclone/`, the home page and privacy policy of the Google OAuth app the studio's rclone on
+TJ's Mac signs in with (`https://tj-reed-game-studio.github.io/playtests/apps/rclone/`). No game CI
+writes there; a change goes through a PR.
+
 Public site, unlisted links: nothing secret goes in a build.
