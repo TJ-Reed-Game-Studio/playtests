@@ -16,8 +16,10 @@ sync program on the studio owner's own computer (<a href="./">what the app is</a
 the studio owner, and the only Google account it reaches is the owner's own.</p>
 
 <h2>What it accesses</h2>
-<p>With the owner's consent, it reads and writes files in the owner's own Google Drive, to copy the
-studio's working files there and back. It asks for no other Google data.</p>
+<p>With the owner's consent, it has full access to the owner's own Google Drive (Google's
+<code>drive</code> scope), which rclone needs to list, upload and download files. In practice it
+copies the studio's working files into the studio's folder there and back. It asks for no other
+Google data.</p>
 
 <h2>Where data goes</h2>
 <ul>
@@ -26,6 +28,10 @@ studio's working files there and back. It asks for no other Google data.</p>
 <li>The app has no server of its own. It collects, keeps, sells and shares no data, and sends none
 to the studio, to advertisers or to anyone else.</li>
 </ul>
+
+<h2>Retention and deletion</h2>
+<p>The app keeps nothing of its own. Files stay in the owner's Drive until the owner deletes them,
+and the token stays on the owner's computer until access is removed (below), which deletes it.</p>
 
 <h2>Google API Services User Data Policy</h2>
 <p>The app's use and transfer of information received from Google APIs adheres to the
